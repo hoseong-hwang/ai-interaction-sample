@@ -8,9 +8,7 @@ class HeyGenLiveAvatarScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('HeyGen - Live Avatar')),
-      body: const Center(
-        child: Text('HeyGen Live Avatar'),
-      ),
+      body: const Center(child: Text('HeyGen Live Avatar')),
     );
   }
 }

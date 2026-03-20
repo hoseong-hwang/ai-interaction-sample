@@ -1,5 +1,3 @@
-import 'package:ai_interaction_sample/app_routes.dart';
-import 'package:ai_interaction_sample/heygen_live_avatar_screen.dart';
 import 'package:ai_interaction_sample/main_screen.dart';
 import 'package:flutter/material.dart';
 
@@ -12,13 +10,6 @@ class App extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      initialRoute: AppRoutes.main,
-      routes: {
-        AppRoutes.main: (context) => const MainScreen(),
-        AppRoutes.heygenLiveAvatar: (context) =>
-            const HeyGenLiveAvatarScreen(),
-      },
-    );
+    return const MaterialApp(home: MainScreen());
   }
 }

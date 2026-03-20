@@ -1,4 +1,4 @@
-import 'package:ai_interaction_sample/app_routes.dart';
+import 'package:ai_interaction_sample/heygen_live_avatar_screen.dart';
 import 'package:flutter/material.dart';
 
 class MainScreen extends StatelessWidget {
@@ -25,17 +25,16 @@ class MainScreen extends StatelessWidget {
                     ),
                   ),
                   onPressed: () {
-                    Navigator.pushNamed(
+                    Navigator.push<void>(
                       context,
-                      AppRoutes.heygenLiveAvatar,
+                      MaterialPageRoute<void>(
+                        builder: (context) => const HeyGenLiveAvatarScreen(),
+                      ),
                     );
                   },
                   child: const Text(
                     'HeyGen - Live Avatar',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
