@@ -14,6 +14,7 @@ dependencies:
   livekit_client: ^2.6.5
   path: ^1.9.1
   path_provider: ^2.1.5
+  speech_to_text: ^7.3.0
   web_socket_channel: ^3.0.3
 
 dev_dependencies:

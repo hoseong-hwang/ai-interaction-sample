@@ -1,4 +1,5 @@
 import 'package:ai_interaction_sample/heygen/heygen_page.dart';
+import 'package:ai_interaction_sample/stt/speech_to_text_page.dart';
 import 'package:flutter/material.dart';
 
 class MainScreen extends StatelessWidget {
@@ -25,6 +26,12 @@ class MainScreen extends StatelessWidget {
                 context,
                 title: "HeyGen - Live Avatar",
                 page: const HeygenPage(),
+              ),
+              const SizedBox(height: 12),
+              _button(
+                context,
+                title: "Speech To Text",
+                page: const SpeechToTextPage(),
               ),
             ],
           ),

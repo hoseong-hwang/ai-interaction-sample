@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
+import 'package:speech_to_text/speech_recognition_result.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../api/live_avatar_client.dart';
@@ -13,8 +15,19 @@ import 'lite_ws_speak.dart';
 ///
 /// **중요:** `avatar.speak_text`는 [FULL 모드](https://docs.liveavatar.com/docs/full-mode-events)에서만 동작합니다.
 /// LITE 모드는 `agent.speak`(PCM Base64) 등 다른 프로토콜을 씁니다.
-const Duration kLiveAvatarTestSpeakDelay = Duration(seconds: 5);
+const Duration kLiveAvatarTestSpeakDelay = Duration.zero;
 const String kLiveAvatarTestSpeakPhrase = '안녕하세요 저는 헤이젠 라이브아바타 입니다';
+
+/// [SpeechToText.listen] — 마지막 인식 결과 갱신 후 무음이 이 시간을 넘기면 플러그인이 `stop()` 호출.
+/// (OS가 더 짧게 끊을 수 있음, 특히 Android.)
+const Duration kLiveAvatarSttPauseFor = Duration(seconds: 3);
+
+/// 최대 청취 시간(상한). 그 전에 OS/에러로 끊길 수 있음.
+const Duration kLiveAvatarSttListenFor = Duration(minutes: 5);
+
+void _sttLog(String message) {
+  debugPrint('${DateTime.now().toIso8601String()} | $message');
+}
 
 /// LiveAvatar: session token → start session → [Room.connect] → remote [VideoTrack] 표시.
 ///
@@ -75,12 +88,59 @@ class _LiveAvatarSessionViewState extends State<LiveAvatarSessionView> {
 
   late final TextEditingController _liteSpeakController;
   bool _liteSending = false;
+  final SpeechToText _stt = SpeechToText();
+  bool _sttReady = false;
+  bool _sttListening = false;
+
+  /// `stop()` 호출 주체를 [notListening] 로그와 매칭하기 위한 플래그.
+  bool _sttStopExpectedUser = false;
+  bool _sttStopExpectedDispose = false;
+  String? _lastLoggedUiError;
 
   @override
   void initState() {
     super.initState();
     _liteSpeakController = TextEditingController();
+    unawaited(_initStt());
     unawaited(_bootstrap());
+  }
+
+  Future<void> _initStt() async {
+    try {
+      _sttReady = await _stt.initialize(
+        onError: (e) => _sttLog('LiveAvatar LITE STT error: $e'),
+        onStatus: _onSttStatus,
+      );
+    } catch (e, st) {
+      _sttLog('LiveAvatar LITE STT init 실패: $e\n$st');
+      _sttReady = false;
+    }
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _onSttStatus(String s) {
+    _sttLog('LiveAvatar STT status: $s');
+    if (s == 'notListening') {
+      if (_sttStopExpectedUser) {
+        _sttLog('LiveAvatar STT: 종료 원인 → 사용자 stop (notListening)');
+        _sttStopExpectedUser = false;
+      } else if (_sttStopExpectedDispose) {
+        _sttLog('LiveAvatar STT: 종료 원인 → dispose (notListening)');
+        _sttStopExpectedDispose = false;
+      } else {
+        _sttLog(
+          'LiveAvatar STT: 종료 원인 → 자동 (pauseFor=$kLiveAvatarSttPauseFor '
+          '/ listenFor=$kLiveAvatarSttListenFor / OS 무음 등)',
+        );
+      }
+    }
+    if (!mounted) return;
+    final listening = s == 'listening';
+    if (_sttListening != listening) {
+      setState(() => _sttListening = listening);
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -166,7 +226,8 @@ class _LiveAvatarSessionViewState extends State<LiveAvatarSessionView> {
             ws.sink.add(
               jsonEncode(<String, dynamic>{
                 'type': 'session.keep_alive',
-                'event_id': 'flutter-keepalive-${DateTime.now().millisecondsSinceEpoch}',
+                'event_id':
+                    'flutter-keepalive-${DateTime.now().millisecondsSinceEpoch}',
               }),
             );
           } catch (_) {}
@@ -182,6 +243,7 @@ class _LiveAvatarSessionViewState extends State<LiveAvatarSessionView> {
         ),
       );
     } catch (e, st) {
+      debugPrint('LiveAvatar 화면 에러(_bootstrap): $e\n$st');
       widget.onError?.call(e, st);
       if (!mounted) return;
       setState(() {
@@ -291,6 +353,56 @@ class _LiveAvatarSessionViewState extends State<LiveAvatarSessionView> {
     }
   }
 
+  Future<void> _toggleStt() async {
+    if (!_sttReady) {
+      await _initStt();
+      if (!_sttReady) return;
+    }
+
+    if (_sttListening) {
+      _sttStopExpectedUser = true;
+      _sttLog('LiveAvatar STT: 종료 (사용자 마이크 버튼)');
+      await _stt.stop();
+      if (mounted) setState(() => _sttListening = false);
+      return;
+    }
+
+    try {
+      _sttStopExpectedUser = false;
+      _sttStopExpectedDispose = false;
+      _sttLog(
+        'LiveAvatar STT: listen() 호출 '
+        '(pauseFor=$kLiveAvatarSttPauseFor, listenFor=$kLiveAvatarSttListenFor)',
+      );
+      await _stt.listen(
+        localeId: 'ko_KR',
+        listenMode: ListenMode.confirmation,
+        partialResults: true,
+        pauseFor: kLiveAvatarSttPauseFor,
+        listenFor: kLiveAvatarSttListenFor,
+        onResult: _onSttResult,
+      );
+      _sttLog('LiveAvatar STT: listen() 시작됨 (인식 세션 열림)');
+      if (mounted) setState(() => _sttListening = true);
+    } catch (e, st) {
+      _sttLog('LiveAvatar LITE STT listen 실패: $e\n$st');
+    }
+  }
+
+  void _onSttResult(SpeechRecognitionResult result) {
+    final words = result.recognizedWords.trim();
+    _sttLog(
+      'LiveAvatar STT [${result.finalResult ? "final" : "partial"}] '
+      '${words.isEmpty ? "(empty)" : words}',
+    );
+    if (words.isEmpty) return;
+    _liteSpeakController
+      ..text = words
+      ..selection = TextSelection.fromPosition(
+        TextPosition(offset: _liteSpeakController.text.length),
+      );
+  }
+
   VideoTrack? _firstRemoteVideoTrack(Room room) {
     for (final p in room.remoteParticipants.values) {
       for (final pub in p.videoTrackPublications) {
@@ -324,6 +436,9 @@ class _LiveAvatarSessionViewState extends State<LiveAvatarSessionView> {
       Future(() async {
         await listener?.dispose();
         await liteWsSub?.cancel();
+        _sttStopExpectedDispose = true;
+        _sttLog('LiveAvatar STT: 종료 (위젯 dispose)');
+        await _stt.stop();
         keepAliveTimer?.cancel();
         if (room != null) {
           await room.disconnect();
@@ -341,6 +456,11 @@ class _LiveAvatarSessionViewState extends State<LiveAvatarSessionView> {
   Widget build(BuildContext context) {
     final err = _error;
     if (err != null) {
+      final errText = err.toString();
+      if (_lastLoggedUiError != errText) {
+        _lastLoggedUiError = errText;
+        debugPrint('LiveAvatar 화면 표시 에러: $errText');
+      }
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -351,7 +471,8 @@ class _LiveAvatarSessionViewState extends State<LiveAvatarSessionView> {
 
     final track = _videoTrack;
     if (track != null) {
-      final showLiteBar = widget.sessionTokenRequest.mode == 'LITE' &&
+      final showLiteBar =
+          widget.sessionTokenRequest.mode == 'LITE' &&
           widget.showLiteSpeakComposer &&
           _liteWs != null;
 
@@ -420,6 +541,16 @@ class _LiveAvatarSessionViewState extends State<LiveAvatarSessionView> {
                                 ),
                               )
                             : const Text('말하기'),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        tooltip: _sttListening ? '음성 인식 중지' : '음성 인식 시작',
+                        onPressed: _liteSending ? null : _toggleStt,
+                        icon: Icon(
+                          _sttListening
+                              ? Icons.mic_off_rounded
+                              : Icons.mic_rounded,
+                        ),
                       ),
                     ],
                   ),
